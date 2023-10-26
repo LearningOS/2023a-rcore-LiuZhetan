@@ -1,9 +1,11 @@
 //! Process management syscalls
+use core::mem;
+
 use crate::{
     config::MAX_SYSCALL_NUM,
     task::{
-        change_program_brk, exit_current_and_run_next, suspend_current_and_run_next, TaskStatus,
-    },
+        change_program_brk, exit_current_and_run_next, suspend_current_and_run_next, TaskStatus, current_user_token,
+    }, mm::copy_to_user, timer::get_time_us,
 };
 
 #[repr(C)]
@@ -43,7 +45,46 @@ pub fn sys_yield() -> isize {
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!("kernel: sys_get_time");
-    -1
+    // get a Vector of mut ref of bytes which may across physical pages,
+    // if this happens, it means the physical address of these bytes may 
+    // not be continuous
+    /*let buffers = translated_byte_buffer(
+        current_user_token(),
+        _ts as *const u8 , 
+        mem::size_of::<TimeVal>()
+    );
+    let us = get_time_us();
+    let tv = TimeVal {
+        sec: us / 1_000_000,
+        usec: us % 1_000_000,
+    };
+    // get byte slice of tv
+    let bytes = unsafe {
+        core::slice::from_raw_parts(
+            &tv as *const _ as *const u8, 
+            mem::size_of::<TimeVal>()
+        )};
+    // copy data
+    let mut start = 0;
+    for buffer in buffers {
+        let end = start + buffer.len();
+        buffer.copy_from_slice(&bytes[start..end]);
+        start = end;
+    }*/
+
+    let us = get_time_us();
+    let tv = TimeVal {
+        sec: us / 1_000_000,
+        usec: us % 1_000_000,
+    };
+    match copy_to_user(
+        current_user_token(), 
+        _ts, 
+        &tv, 
+        mem::size_of::<TimeVal>()) {
+        0 => 0,
+        _ => -1,
+    }
 }
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
