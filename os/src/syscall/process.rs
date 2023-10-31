@@ -1,14 +1,16 @@
 //! Process management syscalls
+use core::mem;
+
 use alloc::sync::Arc;
 
 use crate::{
-    config::MAX_SYSCALL_NUM,
+    config::{MAX_SYSCALL_NUM, PAGE_SIZE},
     loader::get_app_data_by_name,
-    mm::{translated_refmut, translated_str},
+    mm::{translated_refmut, translated_str, copy_to_user},
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next, TaskStatus,
-    },
+        suspend_current_and_run_next, TaskStatus,get_current_task_info, map_current_memory, unmap_current_memory,
+    }, timer::get_time_us,
 };
 
 #[repr(C)]
@@ -22,11 +24,11 @@ pub struct TimeVal {
 #[allow(dead_code)]
 pub struct TaskInfo {
     /// Task status in it's life cycle
-    status: TaskStatus,
+    pub status: TaskStatus,
     /// The numbers of syscall called by task
-    syscall_times: [u32; MAX_SYSCALL_NUM],
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
     /// Total running time of task
-    time: usize,
+    pub time: usize,
 }
 
 /// task exits and submit an exit code
@@ -119,10 +121,26 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
 pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_get_time ",
         current_task().unwrap().pid.0
     );
-    -1
+    // get a Vector of mut ref of bytes which may across physical pages,
+    // if this happens, it means the physical address of these bytes may
+    // not be continuous
+    
+    let us = get_time_us();
+    let tv = TimeVal {
+        sec: us / 1_000_000,
+        usec: us % 1_000_000,
+    };
+    match copy_to_user(
+        current_user_token(),
+        _ts,
+        &tv,
+        mem::size_of::<TimeVal>()) {
+        0 => 0,
+        _ => -1,
+    }
 }
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
@@ -130,28 +148,62 @@ pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
 pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
     trace!(
-        "kernel:pid[{}] sys_task_info NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_task_info",
         current_task().unwrap().pid.0
     );
-    -1
+    if let Some(task_info) = get_current_task_info() {
+        copy_to_user(
+            current_user_token(),
+            _ti,
+            &task_info,
+            mem::size_of::<TaskInfo>());
+        0
+    }
+    else {
+        -1
+    }
+}
+
+fn check_map_args(start:usize, _len:usize, port:Option<usize>) -> bool {
+    if start % PAGE_SIZE != 0 {
+        return false;
+    }
+    match port {
+        Some(p) => {
+            if p & !0x7 != 0 || p & 0x7 == 0 {
+                println!("[Kernel]: check_map_args failed, por={:b}",p);
+                false
+            }
+            else {
+                true
+            }
+        }
+        None => true
+    }
 }
 
 /// YOUR JOB: Implement mmap.
 pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_mmap");
+    if check_map_args(_start, _len, Some(_port))
+        && map_current_memory(_start, _len, _port) {
+        0
+    }
+    else {
+        -1
+    }
 }
 
 /// YOUR JOB: Implement munmap.
 pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel: sys_munmap");
+    if check_map_args(_start, _len, None)
+        && unmap_current_memory(_start, _len) {
+        0
+    }
+    else {
+        -1
+    }
 }
 
 /// change data segment size
