@@ -148,8 +148,7 @@ pub fn map_current_memory(start: usize, len: usize, port: usize) -> bool {
     if let Some(inner) = current_task(){
         let mut inner = inner.inner_exclusive_access();
         let port = (port | 1 << 3) as u8;
-        inner.memory_set.map_area(start.into(), (start + len).into(), port.into());
-        true
+        inner.memory_set.map_area(start.into(), (start + len).into(), port.into())
     }
     else {
         false
@@ -160,8 +159,7 @@ pub fn map_current_memory(start: usize, len: usize, port: usize) -> bool {
 pub fn unmap_current_memory(start: usize, len: usize) -> bool {
     if let Some(inner) = current_task(){
         let mut inner = inner.inner_exclusive_access();
-        inner.memory_set.unmap_area(start.into(), (start + len).into());
-        true
+        inner.memory_set.unmap_area(start.into(), (start + len).into())
     }
     else {
         false

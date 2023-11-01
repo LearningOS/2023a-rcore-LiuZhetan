@@ -17,7 +17,7 @@ mod context;
 use crate::config::{TRAMPOLINE, TRAP_CONTEXT_BASE};
 use crate::syscall::syscall;
 use crate::task::{
-    current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next, update_current_syscall_count,
+    current_trap_cx, current_user_token, exit_current_and_run_next, suspend_current_and_run_next, update_current_syscall_count, current_task,
 };
 use crate::timer::set_next_trigger;
 use core::arch::{asm, global_asm};
@@ -143,7 +143,8 @@ pub fn trap_return() -> ! {
 pub fn trap_from_kernel() -> ! {
     use riscv::register::sepc;
     trace!("stval = {:#x}, sepc = {:#x}", stval::read(), sepc::read());
-    panic!("a trap {:?} from kernel!", scause::read().cause());
+    let task = current_task().unwrap();
+    panic!("pid {} case a kernel a trap {:?} from kernel!", task.pid.0, scause::read().cause());
 }
 
 pub use context::TrapContext;

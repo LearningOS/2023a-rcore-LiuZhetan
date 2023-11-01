@@ -9,7 +9,7 @@ use crate::{
     mm::{translated_refmut, translated_str, copy_to_user},
     task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next, TaskStatus,get_current_task_info, map_current_memory, unmap_current_memory,
+        suspend_current_and_run_next, TaskStatus,get_current_task_info, map_current_memory, unmap_current_memory, TaskControlBlock,
     }, timer::get_time_us,
 };
 
@@ -92,6 +92,7 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
         .iter()
         .any(|p| pid == -1 || pid as usize == p.getpid())
     {
+        // println!("kernel::pid[{}] not found pid:[{}]", current_task().unwrap().pid.0, pid);
         return -1;
         // ---- release current PCB
     }
@@ -109,6 +110,7 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
         let exit_code = child.inner_exclusive_access().exit_code;
         // ++++ release child PCB
         *translated_refmut(inner.memory_set.token(), exit_code_ptr) = exit_code;
+        // println!("kernel::pid[{}] found pid:[{}]", current_task().unwrap().pid.0, pid);
         found_pid as isize
     } else {
         -2
@@ -219,18 +221,46 @@ pub fn sys_sbrk(size: i32) -> isize {
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
 pub fn sys_spawn(_path: *const u8) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+    trace!("kernel:pid[{}] sys_exec", current_task().unwrap().pid.0);
+    let token = current_user_token();
+    let path = translated_str(token, _path);
+    if let Some(data) = get_app_data_by_name(path.as_str()) {
+        let new_task = Arc::new(TaskControlBlock::new(data));
+        let new_pid = new_task.pid.0;
+        // modify trap context of new_task, because it returns immediately after switching
+        let trap_cx = new_task.inner_exclusive_access().get_trap_cx();
+        // we do not have to move to next instruction since we have done it before
+        // for child process, spawn returns 0
+        trap_cx.x[10] = 0;
+        // blind parent and child
+        let current_task = current_task().unwrap();
+        let mut inner = current_task.inner_exclusive_access();
+        inner.children.push(new_task.clone());
+        drop(inner);
+        let mut inner = new_task.inner_exclusive_access();
+        inner.parent = Some(Arc::downgrade(&current_task));
+        drop(inner);
+        // add new task to scheduler
+        add_task(new_task);
+        new_pid as isize
+    } else {
+        -1
+    }
 }
 
 // YOUR JOB: Set task priority.
 pub fn sys_set_priority(_prio: isize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_set_priority",
         current_task().unwrap().pid.0
     );
-    -1
+    if _prio <= 2 {
+        -1
+    }
+    else {
+        let task = current_task().unwrap();
+        let mut inner = task.inner_exclusive_access();
+        inner.priority = _prio as usize;
+        _prio
+    }
 }
