@@ -1,167 +1,21 @@
-# 第三章学习笔记
+# Chapter 3
 
-## 编程题
+## 编程作业
 
-1. 修改数据结构
+在TCB中加入start_time和syscall_times两个成员分别用于记录程序首次运行的时间和系统调用的次数，start_time在进程首次调度运行的时候设置，syscall_times在trap_handle中系统调用的处理入口，对当前进程TCB的syscall_times计数。
 
-    要想实现task_info系统调用，首先考虑在TCB中增加相应的信息：
+## 简答作业
 
-    ```rust
-    pub struct TaskControlBlock {
-        /// The task status in it's lifecycle
-        pub task_status: TaskStatus,
-        /// The task context
-        pub task_cx: TaskContext,
-        /// The syscall times
-        syscall_times: [u32; MAX_SYSCALL_NUM],
-        /// The time process start to run
-        start_time: usize
-    }
-    ```
+1. 运行ch2b_bad_address/instruction/register.rs, 查看运行结果
 
-    注意TaskControlBlock中的成员变量改变了，也需要修改TaskControlBlock的初始化方式。为了方便旧的结构体创建方式，提供了new方法：
+    ![img](imgs/ch3_bad.png)
 
-    ```rust
-    impl TaskControlBlock {
-        pub fn new(task_status: TaskStatus, task_cx: TaskContext) -> Self {
-            TaskControlBlock {
-                task_status,
-                task_cx,
-                syscall_times: [0u32; MAX_SYSCALL_NUM],
-                start_time: 0
-            }
-        }
-    }
-    ```
+2. 深入理解 trap.S 中两个函数__alltraps和__restore 的作用，并回答如下问题：
 
-    并修改TASK_MANAGER中创建TCB的方式：
-
-    ```rust
-    lazy_static! {
-        /// Global variable: TASK_MANAGER
-        pub static ref TASK_MANAGER: TaskManager = {
-            let num_app = get_num_app();
-            // Apply new method to create TaskControlBlock
-            let mut tasks = [TaskControlBlock::new(
-                TaskStatus::UnInit,
-                TaskContext::zero_init(),
-            ); MAX_APP_NUM];
-            for (i, task) in tasks.iter_mut().enumerate() {
-                task.task_cx = TaskContext::goto_restore(init_app_cx(i));
-                task.task_status = TaskStatus::Ready;
-            }
-            TaskManager {
-                num_app,
-                inner: unsafe {
-                    UPSafeCell::new(TaskManagerInner {
-                        tasks,
-                        current_task: 0,
-                    })
-                },
-            }
-        };
-    }
-    ```
-
-2. 更新系统调用次数信息
-
-    找到系统调用在trap_handler中的处理逻辑，增加一个用于更新当前task系统调用次数的方法update_current_syscall_count：
-
-    ```rust
-    match scause.cause() {
-        Trap::Exception(Exception::UserEnvCall) => {
-            // jump to next instruction anyway
-            cx.sepc += 4;
-            // update TCB system call count
-            update_current_syscall_count(cx.x[17]);
-            // get system call return value
-            cx.x[10] = syscall(cx.x[17], [cx.x[10], cx.x[11], cx.x[12]]) as usize;
-        }
-    ......
-    ```
-
-    然后在task模块以及TaskManager中增加相应的方法：
-
-    ```rust
-    // task/mod.rs
-    pub fn update_current_syscall_count(syscall_id:usize) {
-        TASK_MANAGER.update_syscall_count(syscall_id);
-    }
-    ```
-
-    ```rust
-    // task/mod.rs
-    pub fn update_current_syscall_count(syscall_id:usize) {
-        TASK_MANAGER.update_syscall_count(syscall_id);
-    }
-    ```
-
-    ```rust
-    // impl TaskManager
-    fn update_syscall_count(&self, syscall_id:usize) {
-        let mut inner = self.inner.exclusive_access();
-        let current = inner.current_task;
-        inner.tasks[current].syscall_times[syscall_id] += 1;
-    }
-    ```
-
-3. 设置进程第一次被调度的时刻
-
-   在内核的调度函数run_next_task中加入简单的判断逻辑：
-
-   ```rust
-    fn run_next_task(&self) {
-        if let Some(next) = self.find_next_task() {
-            let mut inner = self.inner.exclusive_access();
-            let current = inner.current_task;
-            inner.tasks[next].task_status = TaskStatus::Running;
-
-            // If next process is sheduled the first time, initiate start_time
-            if inner.tasks[next].start_time == 0 {
-                inner.tasks[next].start_time = timer::get_time_us();
-            }
-    ......
-   ```
-
-4. 实现sys_task_info系统调用
-
-    实现sys_task_info：
-
-    ```rust
-    pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
-        trace!("kernel: sys_task_info");
-        if let Some(task_info) = get_current_task_info() {
-            unsafe {
-                *_ti = task_info;
-            }
-            0
-        }
-        else {
-            -1
-        }
-    }
-    ```
-
-    在TaskManage中实现主体逻辑：
-
-    ```rust
-    fn get_task_info(&self, task_id:Option<usize>) -> Option<TaskInfo> {
-        let inner = self.inner.exclusive_access();
-        // 
-        let task_id = if let Some(id) = task_id {id} else {inner.current_task};
-        if task_id < inner.tasks.len() {
-            Option::Some(TaskInfo {
-                status: inner.tasks[task_id].task_status,
-                syscall_times: inner.tasks[task_id].syscall_times.clone(),
-                time: match inner.tasks[task_id].start_time {
-                    0 => 0,
-                    // transfer to millisecond
-                    t => (timer::get_time_us() - t) / 1000,
-                },
-            })
-        }
-        else {
-            Option::None
-        }
-    }
-    ```
+    1. a0是__restore的第一个参数，是进程TrapContext的地址，__restore可以用于进程执行系统调用后从S态返回，也可以用于内核调度并切换进程。
+    2. L43-L48的这段代码用于将存储在TrapContext中的sstatus、sepc写入相应的寄存器中，并将用户栈指针写入到sscratch，最后将使用csrrw将sp切回用户栈。
+    3. x4暂时不用到，x2是sp，会在最后保存。
+    4. L60的csrrw指令后：sp->user stack, sscratch->kernel stack
+    5. __restore中使用sret指令切回用户态
+    6. L13csrrw指令后：sp->kernel stack, sscratch->user stack
+    7. U进入S态使用ecall指令
