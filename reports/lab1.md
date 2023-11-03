@@ -6,7 +6,11 @@
 
 ## 简答作业
 
-1. 深入理解 trap.S 中两个函数__alltraps和__restore 的作用，并回答如下问题：
+1. 运行ch2b_bad_address/instruction/register.rs, 查看运行结果
+
+    ![img](imgs/ch3_bad.png)
+
+2. 深入理解 trap.S 中两个函数__alltraps和__restore 的作用，并回答如下问题：
 
     1. a0是__restore的第一个参数，是进程TrapContext的地址，__restore可以用于进程执行系统调用后从S态返回，也可以用于内核调度并切换进程。
     2. L43-L48的这段代码用于将存储在TrapContext中的sstatus、sepc写入相应的寄存器中，并将用户栈指针写入到sscratch，最后将使用csrrw将sp切回用户栈。
